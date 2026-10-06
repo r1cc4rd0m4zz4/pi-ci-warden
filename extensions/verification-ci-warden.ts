@@ -32,7 +32,8 @@ const FAKE_TEST_PATTERNS = [
 const VALID_TEST_RUNNERS = [
   /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/i,
   /\bpytest\b/i,
-  /\bpython[23]?\s+(?:-m\s+(?:unittest|pytest)|test_.*\.py)\b/i,
+  /\bpython[23]?\s+(?:-m\s+(?:unittest|pytest)|(?:\S*\/)?test_.*\.py)\b/i,
+  /\bnode\s+(?:--test|(?:\S*\/)?test_.*\.m?js)\b/i,
   /\bcargo\s+test\b/i,
   /\bgo\s+test\b/i,
   /\bvitest\b/i,
