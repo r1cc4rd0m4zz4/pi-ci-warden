@@ -1,0 +1,30 @@
+{
+  "name": "pi-ci-warden",
+  "version": "0.1.0",
+  "description": "Zero-dependency CI Verification & Anti-Cheating Warden for Pi Coding Agent",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "ci",
+    "verification",
+    "anti-cheating",
+    "tdd",
+    "quality-gate"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/test_warden.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/verification-ci-warden.ts"
+    ]
+  },
+  "files": [
+    "extensions/verification-ci-warden.ts",
+    "README.md",
+    "LICENSE"
+  ]
+}
