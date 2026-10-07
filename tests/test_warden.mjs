@@ -33,14 +33,36 @@ const VALID_TEST_RUNNERS = [
   /\bmake\s+test\b/i,
 ];
 
-function isRealTestCommand(cmd) {
-  for (const fake of FAKE_TEST_PATTERNS) {
-    if (fake.test(cmd)) return false;
-  }
+function isRealTestCommand(cmd, projectTestCmd = null) {
+  const cleanCmd = cmd
+    .replace(/^\s*(?:cd\s+[^\s&;]+\s*&&\s*)+/, "")
+    .replace(/^\s*(?:[A-Za-z0-9_]+=[^\s]+\s+)+/, "")
+    .trim();
+
+  // Reject inline interpreter evaluations, help/version queries, and harmless diagnostic commands
+  if (/^\s*(?:node|bun)\s+(?:-e|--eval)\b/i.test(cleanCmd)) return false;
+  if (/^\s*python[23]?\s+-c\b/i.test(cleanCmd)) return false;
+  if (/^\s*(?:sh|bash|zsh|dash)\s+-c\b/i.test(cleanCmd)) return false;
+  if (/^\s*(?:echo|printf|true|cat|ls|head|tail)\b/i.test(cleanCmd)) return false;
+  if (/(?:^|\s)(?:--help|--version|-h|-v)\b/i.test(cleanCmd)) return false;
+
   for (const supp of TEST_SUPPRESSION_PATTERNS) {
-    if (supp.test(cmd)) return false;
+    if (supp.test(cleanCmd)) return false;
   }
-  return VALID_TEST_RUNNERS.some((runner) => runner.test(cmd));
+
+  if (projectTestCmd && (cleanCmd === projectTestCmd || cleanCmd.startsWith(projectTestCmd + " "))) {
+    return true;
+  }
+
+  return (
+    /^\s*(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/i.test(cleanCmd) ||
+    /^\s*pytest\b/i.test(cleanCmd) ||
+    /^\s*cargo\s+test\b/i.test(cleanCmd) ||
+    /^\s*go\s+test\b/i.test(cleanCmd) ||
+    /^\s*(?:vitest|jest|ctest)\b/i.test(cleanCmd) ||
+    /^\s*node\s+--test\b/i.test(cleanCmd) ||
+    /^\s*python[23]?\s+(?:-m\s+(?:unittest|pytest)|(?:\S*\/)?test_.*\.py)\b/i.test(cleanCmd)
+  );
 }
 
 function isSourceCodePath(p) {
@@ -60,11 +82,13 @@ assert.strictEqual(isRealTestCommand("python3 -m unittest discover"), true, "uni
 assert.strictEqual(isRealTestCommand("cargo test"), true, "cargo test must be valid");
 assert.strictEqual(isRealTestCommand("go test ./..."), true, "go test must be valid");
 
-// 2. Fake test runners
+// 2. Fake test runners and diagnostic one-liners
 assert.strictEqual(isRealTestCommand("echo 'tests passed'"), false, "echo must be rejected");
 assert.strictEqual(isRealTestCommand("pytest --help"), false, "--help must be rejected");
 assert.strictEqual(isRealTestCommand("pytest --version"), false, "--version must be rejected");
 assert.strictEqual(isRealTestCommand("true"), false, "bare true must be rejected");
+assert.strictEqual(isRealTestCommand("node -e 'const cmd = \"npm test\"'"), false, "node -e string containing test must be rejected");
+assert.strictEqual(isRealTestCommand("python3 -c 'print(\"testing\")'"), false, "python3 -c string must be rejected");
 
 // 3. Antagonistic test error suppression
 assert.strictEqual(isRealTestCommand("pytest tests/ || true"), false, "|| true must be rejected");

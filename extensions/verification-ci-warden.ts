@@ -108,6 +108,34 @@ export function runOutOfBandVerification(cwd: string): { success: boolean; outpu
   }
 }
 
+function isActualTestRunnerExecution(cmd: string, projectTestCmd: string | null): boolean {
+  const cleanCmd = cmd
+    .replace(/^\s*(?:cd\s+[^\s&;]+\s*&&\s*)+/, "")
+    .replace(/^\s*(?:[A-Za-z0-9_]+=[^\s]+\s+)+/, "")
+    .trim();
+
+  // Reject inline interpreter evaluations and harmless diagnostic commands
+  if (/^\s*(?:node|bun)\s+(?:-e|--eval)\b/i.test(cleanCmd)) return false;
+  if (/^\s*python[23]?\s+-c\b/i.test(cleanCmd)) return false;
+  if (/^\s*(?:sh|bash|zsh|dash)\s+-c\b/i.test(cleanCmd)) return false;
+  if (/^\s*(?:echo|printf|true|cat|ls|head|tail)\b/i.test(cleanCmd)) return false;
+  if (/(?:^|\s)(?:--help|--version|-h|-v)\b/i.test(cleanCmd)) return false;
+
+  if (projectTestCmd && (cleanCmd === projectTestCmd || cleanCmd.startsWith(projectTestCmd + " "))) {
+    return true;
+  }
+
+  return (
+    /^\s*(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/i.test(cleanCmd) ||
+    /^\s*pytest\b/i.test(cleanCmd) ||
+    /^\s*cargo\s+test\b/i.test(cleanCmd) ||
+    /^\s*go\s+test\b/i.test(cleanCmd) ||
+    /^\s*(?:vitest|jest|ctest)\b/i.test(cleanCmd) ||
+    /^\s*node\s+--test\b/i.test(cleanCmd) ||
+    /^\s*python[23]?\s+(?:-m\s+(?:unittest|pytest)|(?:\S*\/)?test_.*\.py)\b/i.test(cleanCmd)
+  );
+}
+
 function isTestFilePath(p: string): boolean {
   return TEST_FILE_PATTERNS.some((pat) => pat.test(p));
 }
@@ -168,7 +196,7 @@ export default function (pi: ExtensionAPI) {
         logWardenEvent(sessionId, "audit_tampering_blocked", targetPath, { reason: "File mutation on audit log" });
         return {
           block: true,
-          reason: "[Verification Warden] Modifica o sovrascrittura dei log di audit categoricamente vietata (Regola: Controllore != Controllato).",
+          reason: "🛑 [Audit Security] I log di audit (~/.cache/laya/) sono protetti e immutabili. Modifica o cancellazione non consentita (Regola: Controllore != Controllato).",
         };
       }
       if (isSourceCodePath(targetPath)) {
@@ -191,7 +219,7 @@ export default function (pi: ExtensionAPI) {
       for (const fake of FAKE_TEST_PATTERNS) {
         if (fake.test(cmd) && cmd.toLowerCase().includes("test")) {
           logWardenEvent(sessionId, "fake_test_runner_blocked", cmd, { reason: "Fake test pattern matched" });
-          ctx.ui.notify(`[Verification Warden] Comando test ingannevole rilevato ("${cmd.slice(0, 30)}..."). I finti test non contano come verifica.`, "warning");
+          ctx.ui.notify(`⚠️ [CI Warden] Comando test non valido ("${cmd.slice(0, 30)}..."). Comandi come 'echo' o 'true' non verificano il codice. 👉 Esegui la suite di test reale del progetto.`, "warning");
           break;
         }
       }
@@ -202,7 +230,7 @@ export default function (pi: ExtensionAPI) {
           logWardenEvent(sessionId, "autonomous_commit_blocked", cmd, { reason: "Missing user commit intent" });
           return {
             block: true,
-            reason: "[Verification Warden] Autonomous git commit forbidden. Explicit user commit intent required (e.g. 'commit', 'committa').",
+            reason: "🛡️ [Git Safety] Commit autonomo non autorizzato. L'agente non può committare da solo senza il tuo permesso esplicito. 👉 Se vuoi autorizzarlo, scrivi 'fai il commit' nel tuo messaggio.",
           };
         }
 
@@ -214,7 +242,7 @@ export default function (pi: ExtensionAPI) {
             logWardenEvent(sessionId, "staged_secret_blocked", cmd, { reason: "Secret detected in staged diff" });
             return {
               block: true,
-              reason: "[Verification Warden] Commit blocked: credential/secret detected in staged diff (DLP Invariant).",
+              reason: "🔒 [DLP Alert] Commit bloccato: rilevata una chiave o token segreto nei file in staging. 👉 Rimuovi il file con 'git reset <file>' prima di committare.",
             };
           }
         } catch {}
@@ -229,7 +257,7 @@ export default function (pi: ExtensionAPI) {
         if (last3[0] === last3[1] && last3[1] === last3[2]) {
           logWardenEvent(sessionId, "stuck_loop_detected", cmd, { count: 3 });
           ctx.ui.notify(
-            `[Verification Warden] Rilevato loop ripetitivo sul comando: "${last3[0].slice(0, 40)}...". Cambia approccio.`,
+            `🔄 [Loop Detector] Comando ripetuto 3 volte consecutive: "${last3[0].slice(0, 40)}...". 👉 L'agente sembra bloccato. Prova un comando o una strategia differente.`,
             "warning"
           );
         }
@@ -244,8 +272,11 @@ export default function (pi: ExtensionAPI) {
     const sessionId = getSessionId(ctx);
     if (event.toolName === "bash" && typeof event.input?.command === "string") {
       const cmd = event.input.command.trim();
+      const isFake = FAKE_TEST_PATTERNS.some((f) => f.test(cmd));
+      if (isFake) return undefined;
+
       const projectTestCmd = resolveProjectTestCommand(process.cwd());
-      const isTestInvocation = (projectTestCmd && cmd.includes(projectTestCmd)) || /\b(?:test|pytest|vitest|jest)\b/i.test(cmd);
+      const isTestInvocation = isActualTestRunnerExecution(cmd, projectTestCmd);
 
       if (isTestInvocation) {
         const isError = event.isError === true;
@@ -257,7 +288,7 @@ export default function (pi: ExtensionAPI) {
           logWardenEvent(sessionId, "test_verified_success", cmd, { exitCode });
         } else {
           logWardenEvent(sessionId, "test_verified_failure", cmd, { exitCode });
-          ctx.ui.notify(`[Verification Warden] Suite di test fallita (exit code ${exitCode}). Il fallimento non conta come verifica.`, "warning");
+          ctx.ui.notify(`❌ [CI Warden] Test falliti (exit code ${exitCode}). L'attività non è verificata finché i test non passano con successo (exit code 0). 👉 Correggi gli errori prima di considerare il lavoro completato.`, "warning");
         }
       }
     }
@@ -275,14 +306,14 @@ export default function (pi: ExtensionAPI) {
         if (oob.success && !oob.skipped) {
           lastSuccessfulTestTimestamp = Date.now();
           logWardenEvent(sessionId, "oob_verification_success", "worktree", { output: oob.output.slice(0, 200) });
-          ctx.ui.notify("[Verification Warden] Verifica ermetica Out-of-Band completata con successo nel worktree isolato.", "info");
+          ctx.ui.notify("✅ [CI Warden] Verifica automatica superata con successo nel worktree isolato.", "info");
         } else if (!oob.skipped) {
           logWardenEvent(sessionId, "fake_done_alert", "session_end", {
             reason: "Code mutated without passing tests",
             lastMutation: lastMutatedPath,
           });
           ctx.ui.notify(
-            `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Modifiche a (${path.basename(lastMutatedPath)}) non verificate!`,
+            `🧪 [CI Warden] Codice modificato ma NON testato. Hai modificato '${path.basename(lastMutatedPath)}' senza verifiche passate con successo. 👉 Lancia la suite di test prima di chiudere.`,
             "error"
           );
         }
@@ -293,7 +324,7 @@ export default function (pi: ExtensionAPI) {
           reason: "Test files were modified during session",
         });
         ctx.ui.notify(
-          "[Verification Warden] ATTENZIONE: I file di test sono stati modificati durante la sessione. Verifica che i test non siano stati indeboliti o cancellati.",
+          `⚠️ [Test Integrity] Modificati file di test in sessione (${path.basename(lastMutatedPath)}). 👉 Controlla con 'git diff' che i test siano stati arricchiti/rafforzati e non allentati o rimossi.`,
           "warning"
         );
       }

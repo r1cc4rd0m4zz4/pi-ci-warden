@@ -9,6 +9,7 @@ It prevents autonomous agents from hallucinating task completion ("Fake-Done") o
 ## Features
 
 - **Out-of-Band Hermetic Verification**: Automatically executes tests in an isolated, ephemeral `git worktree` (`/tmp/pi-verify-*`) to prevent workspace tampering, mock runners, or fake exit codes.
+- **Strict Test Runner Invocation Guard**: Rejects inline interpreter evaluations (`node -e`, `python -c`, `sh -c`), flag queries (`--help`, `--version`), and substring masking tricks. Requires authentic test suite binary invocations.
 - **Zero-Config Manifest Discovery**: Automatically resolves official project test commands from `package.json`, `Cargo.toml`, `pyproject.toml`, or `go.mod`.
 - **Intent-Gated Git Commits**: Autonomous agent commits are strictly forbidden. Git commits are permitted only when explicit user commit intent is present in the prompt.
 - **Staged Diff DLP Scan**: Scans staged diffs (`git diff --cached`) for private keys, AWS tokens, and GitHub credentials before permitting commit execution.
@@ -42,6 +43,7 @@ Inside Pi, use the built-in commands:
 - `/warden status`: Shows whether source code was modified, whether tests have run, and current chronological lock status.
 - `/warden verify`: Triggers an out-of-band hermetic verification in an ephemeral isolated git worktree immediately.
 - `/warden logs`: Displays the last 5 verification events for the current session.
+- `/warden reset`: Manually resets verification state for intentional workflow transitions.
 
 Session logs are stored in `~/.cache/laya/warden.jsonl`.
 
