@@ -14,6 +14,9 @@ It prevents autonomous agents from hallucinating task completion ("Fake-Done") o
 - **Anti-Masking Protection**: Detects and rejects error suppression tricks like `pytest || true`, `npm test || exit 0`, or `|| echo`.
 - **Manifest Supply-Chain Tracking**: Modifying `package.json`, `tsconfig.json`, `Cargo.toml`, or `pyproject.toml` is tracked as critical source code mutation.
 - **Multi-Turn Debt Persistence**: Verification debt does not vanish across prompt turns until a genuine test suite passes.
+- **Anti-Cheating Commit Enforcement**: Blocks lazy, opaque, or evasive commit messages (`update`, `fix`, `wip`, `temp`, or <10 chars). Enforces descriptive and conventional commits.
+- **Audit Log Immutability Protection**: Blocks any agent or sub-agent from deleting, modifying, or truncating audit logs (`firewall.jsonl`, `warden.jsonl`) under the rule of separation (*Auditor != Audited*).
+- **Test-Tampering Detection**: Warns the human operator if test suites or test files were modified during the session to prevent agents from weakening assertions.
 - **Zero Dependencies**: Pure TypeScript in-process. Runs everywhere Pi runs with zero extra packages or daemons.
 
 ---
