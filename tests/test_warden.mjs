@@ -1,4 +1,7 @@
 import assert from "node:assert";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 // Deterministic test suite for pi-ci-warden logic
 
@@ -109,5 +112,50 @@ function isStagedDiffClean(diffText) {
 }
 assert.strictEqual(isStagedDiffClean("diff --git a/key.pem\n+-----BEGIN RSA PRIVATE KEY-----\nMIIE..."), false, "private key in diff rejected");
 assert.strictEqual(isStagedDiffClean("diff --git a/src/index.ts\n+const port = 3000;"), true, "clean code diff accepted");
+
+// 9. Zero-Config Manifest Discovery (Out-of-Band Engine)
+function resolveProjectTest(cwd) {
+  const pkgPath = path.join(cwd, "package.json");
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) {
+        if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) return "pnpm test";
+        if (fs.existsSync(path.join(cwd, "yarn.lock"))) return "yarn test";
+        if (fs.existsSync(path.join(cwd, "bun.lockb"))) return "bun test";
+        return "npm test";
+      }
+    } catch {}
+  }
+  if (fs.existsSync(path.join(cwd, "Cargo.toml"))) return "cargo test";
+  if (fs.existsSync(path.join(cwd, "pyproject.toml")) || fs.existsSync(path.join(cwd, "setup.cfg")) || fs.existsSync(path.join(cwd, "pytest.ini"))) {
+    return "pytest";
+  }
+  if (fs.existsSync(path.join(cwd, "go.mod"))) return "go test ./...";
+  return null;
+}
+
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-warden-test-"));
+try {
+  fs.writeFileSync(path.join(tmpDir, "Cargo.toml"), "[package]\nname = 'demo'");
+  assert.strictEqual(resolveProjectTest(tmpDir), "cargo test", "Cargo.toml resolved to cargo test");
+  fs.unlinkSync(path.join(tmpDir, "Cargo.toml"));
+
+  fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+  assert.strictEqual(resolveProjectTest(tmpDir), "npm test", "package.json resolved to npm test");
+  fs.unlinkSync(path.join(tmpDir, "package.json"));
+
+  fs.writeFileSync(path.join(tmpDir, "pyproject.toml"), "[tool.pytest]");
+  assert.strictEqual(resolveProjectTest(tmpDir), "pytest", "pyproject.toml resolved to pytest");
+  fs.unlinkSync(path.join(tmpDir, "pyproject.toml"));
+
+  fs.writeFileSync(path.join(tmpDir, "go.mod"), "module demo");
+  assert.strictEqual(resolveProjectTest(tmpDir), "go test ./...", "go.mod resolved to go test ./...");
+  fs.unlinkSync(path.join(tmpDir, "go.mod"));
+
+  assert.strictEqual(resolveProjectTest(tmpDir), null, "bare folder resolves to null");
+} finally {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
 
 console.log("All pi-ci-warden invariants passed (100% clean).");
