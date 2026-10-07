@@ -118,6 +118,13 @@ export default function (pi: ExtensionAPI) {
     // 1. Detect code mutation with chronological timestamp
     if (toolName === "edit" || toolName === "write") {
       const targetPath = String(input.path || input.file || "");
+      if (/(?:\.cache[\/\\]laya[\/\\](?:firewall|warden)\.jsonl|laya_serve\.log)/i.test(targetPath)) {
+        logWardenEvent(sessionId, "audit_tampering_blocked", targetPath, { reason: "File mutation on audit log" });
+        return {
+          block: true,
+          reason: "[Verification Warden] Modifica o sovrascrittura dei log di audit categoricamente vietata (Regola: Controllore != Controllato).",
+        };
+      }
       if (isSourceCodePath(targetPath)) {
         lastCodeMutationTimestamp = Date.now();
         lastMutatedPath = targetPath;
@@ -142,7 +149,30 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 3. Deterministic Stuck-Loop Detection
+      // 3. Reject lazy/cheating commit messages (Enforce Conventional Commits)
+      const commitMatch = cmd.match(/(?:git\s+commit\s+(?:-[a-zA-Z0-9-]+\s+)*(?:-m|-am)\s+)(['"])(.*?)\1/);
+      if (commitMatch) {
+        const msg = commitMatch[2].trim();
+        const isLazy = /^(?:update|fix|wip|temp|test|done|patch|clean|changes|sync|wip!|temp!)$/i.test(msg) || msg.length < 10;
+        if (isLazy) {
+          logWardenEvent(sessionId, "lazy_commit_rejected", cmd, { commitMessage: msg });
+          return {
+            block: true,
+            reason: `[Verification Warden] Commit message pigro o generico vietato ("${msg}"). È richiesto un messaggio convenzionale e descrittivo (min 10 caratteri, es. "docs: sanitize readme").`,
+          };
+        }
+      }
+
+      // 4. Zero-Tampering Audit Log Protection (Controllore != Controllato)
+      if (/(?:rm|unlink|truncate|>)\s+.*(?:\.cache[\/\\]laya[\/\\](?:firewall|warden)\.jsonl|laya_serve\.log)/i.test(cmd)) {
+        logWardenEvent(sessionId, "audit_tampering_blocked", cmd, { reason: "Audit log tampering prohibited" });
+        return {
+          block: true,
+          reason: "[Verification Warden] Tentativo di manomissione o cancellazione dei log di audit categoricamente vietato (Regola: Controllore != Controllato).",
+        };
+      }
+
+      // 5. Deterministic Stuck-Loop Detection
       toolHistory.push(cmd);
       if (toolHistory.length > 5) toolHistory.shift();
 
