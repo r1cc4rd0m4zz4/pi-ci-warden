@@ -2,7 +2,7 @@
 
 **Zero-dependency CI Verification & Anti-Cheating Warden for [Pi Coding Agent](https://github.com/earendil-works/pi).**
 
-Enforces Rule 7 of `AGENTS.md` (*Verification & CI: Test negative branches and edge cases first. Local pass != remote verification*). It prevents autonomous agents from hallucinating task completion ("Fake-Done") or skipping test execution after modifying source code.
+It prevents autonomous agents from hallucinating task completion ("Fake-Done") or skipping test execution after modifying source code.
 
 ---
 
