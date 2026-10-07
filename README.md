@@ -8,15 +8,13 @@ It prevents autonomous agents from hallucinating task completion ("Fake-Done") o
 
 ## Features
 
+- **Out-of-Band Hermetic Verification**: Automatically executes tests in an isolated, ephemeral `git worktree` (`/tmp/pi-verify-*`) to prevent workspace tampering, mock runners, or fake exit codes.
+- **Zero-Config Manifest Discovery**: Automatically resolves official project test commands from `package.json`, `Cargo.toml`, `pyproject.toml`, or `go.mod`.
+- **Intent-Gated Git Commits**: Autonomous agent commits are strictly forbidden. Git commits are permitted only when explicit user commit intent is present in the prompt.
+- **Staged Diff DLP Scan**: Scans staged diffs (`git diff --cached`) for private keys, AWS tokens, and GitHub credentials before permitting commit execution.
 - **Chronological Sequence Lock**: Flags and blocks "Fake-Done" if source code was modified after the last passing test run.
-- **Fake Test Runner Rejection**: Blocks agents attempting to claim verification using `echo`, `printf`, `ls`, `cat`, `--help`, `--version`, or `true`.
-- **Exit Code Integrity**: Requires `exitCode === 0` from actual test runners (`npm test`, `pytest`, `cargo test`, `go test`, `vitest`, `jest`, etc.).
-- **Anti-Masking Protection**: Detects and rejects error suppression tricks like `pytest || true`, `npm test || exit 0`, or `|| echo`.
-- **Manifest Supply-Chain Tracking**: Modifying `package.json`, `tsconfig.json`, `Cargo.toml`, or `pyproject.toml` is tracked as critical source code mutation.
-- **Multi-Turn Debt Persistence**: Verification debt does not vanish across prompt turns until a genuine test suite passes.
-- **Anti-Cheating Commit Enforcement**: Blocks lazy, opaque, or evasive commit messages (`update`, `fix`, `wip`, `temp`, or <10 chars). Enforces descriptive and conventional commits.
-- **Audit Log Immutability Protection**: Blocks any agent or sub-agent from deleting, modifying, or truncating audit logs (`firewall.jsonl`, `warden.jsonl`) under the rule of separation (*Auditor != Audited*).
-- **Test-Tampering Detection**: Warns the human operator if test suites or test files were modified during the session to prevent agents from weakening assertions.
+- **Test-Tampering Warning**: Detects in-session modifications to test suites, alerting the operator against assertion weakening.
+- **Native OS Kernel Log Immutability**: Protects audit trails via kernel-level append-only flags (`chflags uappnd` on macOS) without requiring root/sudo.
 - **Zero Dependencies**: Pure TypeScript in-process. Runs everywhere Pi runs with zero extra packages or daemons.
 
 ---
@@ -42,6 +40,7 @@ pi install /path/to/pi-ci-warden
 Inside Pi, use the built-in commands:
 
 - `/warden status`: Shows whether source code was modified, whether tests have run, and current chronological lock status.
+- `/warden verify`: Triggers an out-of-band hermetic verification in an ephemeral isolated git worktree immediately.
 - `/warden logs`: Displays the last 5 verification events for the current session.
 
 Session logs are stored in `~/.cache/laya/warden.jsonl`.

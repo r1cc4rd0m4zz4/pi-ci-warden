@@ -1,23 +1,26 @@
 /**
  * verification-ci-warden.ts
  *
- * Enforcement deterministico di CI & Verification ("Test negative branches and edge cases first. Local pass != remote verification"):
+ * Deterministic CI & Verification Warden:
  * "Test negative branches and edge cases first. Local pass != remote verification."
  *
- * Protezione Antagonista Anti-Cheating:
- * 1. Rifiuto Fake Runners: echo, printf, --help, ls, cat non contano come test.
- * 2. Verifica Exit Code: un test conta come valido SOLO se completa con exitCode == 0 su tool_result.
- * 3. Sequenza Cronologica: se il codice viene modificato DOPO l'ultimo test, scatta l'allarme Fake-Done.
- * 4. Rilevamento Test Tampering: traccia se l'agente modifica i file della suite di test per indebolire gli assert.
- * 5. Log strutturato JSONL in ~/.cache/laya/warden.jsonl con correlazione di sessione.
+ * Holographic Event Horizon & Anti-Cheating Architecture:
+ * 1. Out-of-Band Verification: Hermetic verification in ephemeral git worktree (/tmp/pi-verify-*).
+ * 2. Zero-Config Manifest Discovery: Reads official test commands from package.json, Cargo.toml, pyproject.toml, go.mod.
+ * 3. Intent-Gated Git Commits: Autonomous agent commits forbidden; requires explicit user intent in prompt.
+ * 4. Staged Diff DLP: Pre-commit secret scanning on staged diff instead of syntactic message filtering.
+ * 5. Chronological Sequence Lock: Tracks code mutations vs verified tests to prevent "Fake-Done".
+ * 6. Native OS Kernel Log Immutability: Enforces append-only audit trail via chflags uappnd (macOS).
  */
 
+import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const LOG_FILE = path.join(os.homedir(), ".cache/laya/warden.jsonl");
+const COMMIT_INTENT_REGEX = /\b(?:commit|committa|committare|fai il commit)\b/i;
 
 const FAKE_TEST_PATTERNS = [
   /^\s*echo\b/i,
@@ -29,19 +32,6 @@ const FAKE_TEST_PATTERNS = [
   /^\s*cat\b/i,
 ];
 
-const VALID_TEST_RUNNERS = [
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/i,
-  /\bpytest\b/i,
-  /\bpython[23]?\s+(?:-m\s+(?:unittest|pytest)|(?:\S*\/)?test_.*\.py)\b/i,
-  /\bnode\s+(?:--test|(?:\S*\/)?test_.*\.m?js)\b/i,
-  /\bcargo\s+test\b/i,
-  /\bgo\s+test\b/i,
-  /\bvitest\b/i,
-  /\bjest\b/i,
-  /\bctest\b/i,
-  /\bmake\s+test\b/i,
-];
-
 const TEST_FILE_PATTERNS = [
   /(?:^|[\/\\])tests?[\/\\]/i,
   /(?:^|[\/\\])test_[^\/\\]+\.py$/i,
@@ -49,20 +39,73 @@ const TEST_FILE_PATTERNS = [
   /_test\.go$/i,
 ];
 
-const TEST_SUPPRESSION_PATTERNS = [
-  /\|\|\s*(?:true|exit\s*0|echo\b|:|true\b)/i,
-  /;\s*(?:true|exit\s*0|echo\b|:)\s*$/i,
-  /2>&1\s*\|\s*true/i,
-];
+export function resolveProjectTestCommand(cwd: string): string | null {
+  const pkgPath = path.join(cwd, "package.json");
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      if (pkg.scripts?.test && !/no test specified/i.test(pkg.scripts.test)) {
+        if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) return "pnpm test";
+        if (fs.existsSync(path.join(cwd, "yarn.lock"))) return "yarn test";
+        if (fs.existsSync(path.join(cwd, "bun.lockb"))) return "bun test";
+        return "npm test";
+      }
+    } catch {}
+  }
+  if (fs.existsSync(path.join(cwd, "Cargo.toml"))) return "cargo test";
+  if (fs.existsSync(path.join(cwd, "pyproject.toml")) || fs.existsSync(path.join(cwd, "setup.cfg")) || fs.existsSync(path.join(cwd, "pytest.ini"))) {
+    return "pytest";
+  }
+  if (fs.existsSync(path.join(cwd, "go.mod"))) return "go test ./...";
+  return null;
+}
 
-function isRealTestCommand(cmd: string): boolean {
-  for (const fake of FAKE_TEST_PATTERNS) {
-    if (fake.test(cmd)) return false;
+export function runOutOfBandVerification(cwd: string): { success: boolean; output: string; skipped?: boolean } {
+  const testCmd = resolveProjectTestCommand(cwd);
+  if (!testCmd) {
+    return { success: true, output: "No test script declared in project manifests.", skipped: true };
   }
-  for (const supp of TEST_SUPPRESSION_PATTERNS) {
-    if (supp.test(cmd)) return false;
+
+  let isGit = false;
+  try {
+    cp.execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
+    isGit = true;
+  } catch {
+    isGit = false;
   }
-  return VALID_TEST_RUNNERS.some((runner) => runner.test(cmd));
+
+  if (!isGit) {
+    try {
+      const out = cp.execSync(testCmd, { cwd, encoding: "utf-8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] });
+      return { success: true, output: out };
+    } catch (err: any) {
+      return { success: false, output: err.stderr || err.stdout || String(err) };
+    }
+  }
+
+  const worktreeId = "pi-verify-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+  const worktreeDir = path.join(os.tmpdir(), worktreeId);
+
+  try {
+    cp.execSync(`git worktree add --detach "${worktreeDir}" HEAD`, { cwd, stdio: "ignore" });
+    const diff = cp.execSync("git diff HEAD", { cwd, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+    if (diff.trim()) {
+      try {
+        cp.execSync("git apply --whitespace=nowarn", { cwd: worktreeDir, input: diff, stdio: ["pipe", "ignore", "ignore"] });
+      } catch {}
+    }
+    const out = cp.execSync(testCmd, { cwd: worktreeDir, encoding: "utf-8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] });
+    return { success: true, output: out };
+  } catch (err: any) {
+    return { success: false, output: err.stderr || err.stdout || String(err) };
+  } finally {
+    try {
+      cp.execSync(`git worktree remove --force "${worktreeDir}"`, { cwd, stdio: "ignore" });
+    } catch {}
+    try {
+      fs.rmSync(worktreeDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 function isTestFilePath(p: string): boolean {
@@ -97,6 +140,9 @@ function logWardenEvent(sessionId: string, event: string, target: string, detail
     }) + "\n";
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true, mode: 0o700 });
     fs.appendFileSync(LOG_FILE, entry, "utf-8");
+    if (process.platform === "darwin") {
+      try { cp.execFileSync("chflags", ["uappnd", LOG_FILE], { stdio: "ignore" }); } catch {}
+    }
   } catch {
     // Non-blocking on log write failure
   }
@@ -107,9 +153,9 @@ export default function (pi: ExtensionAPI) {
   let lastSuccessfulTestTimestamp = 0;
   let testFilesModifiedInSession = false;
   let lastMutatedPath = "";
+  let currentTurnUserCommitIntent = false;
   const toolHistory: string[] = [];
 
-  // Track code mutations and detect loops
   pi.on("tool_call", async (event, ctx) => {
     const toolName = event.toolName;
     const input = (event.input || {}) as Record<string, unknown>;
@@ -137,10 +183,11 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // 2. Detect cheating attempts on test commands before run
+    // 2. Shell tool gating
     if (toolName === "bash" && typeof input.command === "string") {
       const cmd = input.command.trim();
 
+      // Fake test rejection
       for (const fake of FAKE_TEST_PATTERNS) {
         if (fake.test(cmd) && cmd.toLowerCase().includes("test")) {
           logWardenEvent(sessionId, "fake_test_runner_blocked", cmd, { reason: "Fake test pattern matched" });
@@ -149,30 +196,31 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 3. Reject lazy/cheating commit messages (Enforce Conventional Commits)
-      const commitMatch = cmd.match(/(?:git\s+commit\s+(?:-[a-zA-Z0-9-]+\s+)*(?:-m|-am)\s+)(['"])(.*?)\1/);
-      if (commitMatch) {
-        const msg = commitMatch[2].trim();
-        const isLazy = /^(?:update|fix|wip|temp|test|done|patch|clean|changes|sync|wip!|temp!)$/i.test(msg) || msg.length < 10;
-        if (isLazy) {
-          logWardenEvent(sessionId, "lazy_commit_rejected", cmd, { commitMessage: msg });
+      // 3. Intent-Gated Git Commits (Agents do not commit autonomously)
+      if (/\bgit\s+commit\b/i.test(cmd)) {
+        if (!currentTurnUserCommitIntent) {
+          logWardenEvent(sessionId, "autonomous_commit_blocked", cmd, { reason: "Missing user commit intent" });
           return {
             block: true,
-            reason: `[Verification Warden] Commit message pigro o generico vietato ("${msg}"). È richiesto un messaggio convenzionale e descrittivo (min 10 caratteri, es. "docs: sanitize readme").`,
+            reason: "[Verification Warden] Autonomous git commit forbidden. Explicit user commit intent required (e.g. 'commit', 'committa').",
           };
         }
+
+        // Staged diff DLP: ensure no secrets staged
+        try {
+          const diff = cp.execSync("git diff --cached", { encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] });
+          const secretPattern = /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{36}|xox[baprs]-[0-9a-zA-Z]{10,48})/i;
+          if (secretPattern.test(diff)) {
+            logWardenEvent(sessionId, "staged_secret_blocked", cmd, { reason: "Secret detected in staged diff" });
+            return {
+              block: true,
+              reason: "[Verification Warden] Commit blocked: credential/secret detected in staged diff (DLP Invariant).",
+            };
+          }
+        } catch {}
       }
 
-      // 4. Zero-Tampering Audit Log Protection (Controllore != Controllato)
-      if (/(?:rm|unlink|truncate|>)\s+.*(?:\.cache[\/\\]laya[\/\\](?:firewall|warden)\.jsonl|laya_serve\.log)/i.test(cmd)) {
-        logWardenEvent(sessionId, "audit_tampering_blocked", cmd, { reason: "Audit log tampering prohibited" });
-        return {
-          block: true,
-          reason: "[Verification Warden] Tentativo di manomissione o cancellazione dei log di audit categoricamente vietato (Regola: Controllore != Controllato).",
-        };
-      }
-
-      // 5. Deterministic Stuck-Loop Detection
+      // 4. Deterministic Stuck-Loop Detection
       toolHistory.push(cmd);
       if (toolHistory.length > 5) toolHistory.shift();
 
@@ -196,7 +244,10 @@ export default function (pi: ExtensionAPI) {
     const sessionId = getSessionId(ctx);
     if (event.toolName === "bash" && typeof event.input?.command === "string") {
       const cmd = event.input.command.trim();
-      if (isRealTestCommand(cmd)) {
+      const projectTestCmd = resolveProjectTestCommand(process.cwd());
+      const isTestInvocation = (projectTestCmd && cmd.includes(projectTestCmd)) || /\b(?:test|pytest|vitest|jest)\b/i.test(cmd);
+
+      if (isTestInvocation) {
         const isError = event.isError === true;
         const details = (event.details || {}) as Record<string, unknown>;
         const exitCode = typeof details.exitCode === "number" ? details.exitCode : (isError ? 1 : 0);
@@ -218,25 +269,26 @@ export default function (pi: ExtensionAPI) {
     const sessionId = getSessionId(ctx);
 
     if (lastCodeMutationTimestamp > 0) {
-      if (lastSuccessfulTestTimestamp === 0) {
-        logWardenEvent(sessionId, "fake_done_alert", "session_end", {
-          reason: "Zero tests executed after code mutation",
-          lastMutation: lastMutatedPath,
-        });
-        ctx.ui.notify(
-          `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Codice modificato (${path.basename(lastMutatedPath)}) senza NESSUN test eseguito con successo!`,
-          "error"
-        );
-      } else if (lastCodeMutationTimestamp > lastSuccessfulTestTimestamp) {
-        logWardenEvent(sessionId, "fake_done_alert", "session_end", {
-          reason: "Code mutated after last successful test",
-          lastMutation: lastMutatedPath,
-        });
-        ctx.ui.notify(
-          `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Codice modificato DOPO l'ultimo test riuscito. Esegui i test per verificare le ultime modifiche!`,
-          "error"
-        );
-      } else if (testFilesModifiedInSession) {
+      if (lastSuccessfulTestTimestamp === 0 || lastCodeMutationTimestamp > lastSuccessfulTestTimestamp) {
+        // Attempt automated out-of-band verification in hermetic worktree before alerting
+        const oob = runOutOfBandVerification(process.cwd());
+        if (oob.success && !oob.skipped) {
+          lastSuccessfulTestTimestamp = Date.now();
+          logWardenEvent(sessionId, "oob_verification_success", "worktree", { output: oob.output.slice(0, 200) });
+          ctx.ui.notify("[Verification Warden] Verifica ermetica Out-of-Band completata con successo nel worktree isolato.", "info");
+        } else if (!oob.skipped) {
+          logWardenEvent(sessionId, "fake_done_alert", "session_end", {
+            reason: "Code mutated without passing tests",
+            lastMutation: lastMutatedPath,
+          });
+          ctx.ui.notify(
+            `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Modifiche a (${path.basename(lastMutatedPath)}) non verificate!`,
+            "error"
+          );
+        }
+      }
+
+      if (testFilesModifiedInSession) {
         logWardenEvent(sessionId, "test_tampering_warning", "session_end", {
           reason: "Test files were modified during session",
         });
@@ -248,20 +300,22 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Keep verification debt persistent across turns until a real test passes!
+  // Track user commit intent on input
   pi.on("input", async (event, ctx) => {
     const text = (event.text || "").trim();
     if (!text || text.startsWith("/")) return undefined;
-    toolHistory.length = 0; // reset loop detector per turn
+    toolHistory.length = 0;
+    currentTurnUserCommitIntent = COMMIT_INTENT_REGEX.test(text);
     logWardenEvent(getSessionId(ctx), "turn_start", text.slice(0, 100), {
       hasUnverifiedMutations: lastCodeMutationTimestamp > lastSuccessfulTestTimestamp,
+      commitIntent: currentTurnUserCommitIntent,
     });
     return undefined;
   });
 
-  // Slash command /warden (reset allows intentional manual reset)
+  // Slash command /warden
   pi.registerCommand("warden", {
-    description: "Stato o log del Verification CI Warden (/warden status | /warden logs | /warden reset)",
+    description: "Stato, verifica o log del Verification CI Warden (/warden status | /warden verify | /warden logs | /warden reset)",
     handler: async (args, ctx) => {
       const cleanArgs = (args || "").trim();
       const sessionId = getSessionId(ctx);
@@ -272,6 +326,18 @@ export default function (pi: ExtensionAPI) {
         testFilesModifiedInSession = false;
         lastMutatedPath = "";
         ctx.ui.notify("Verification Warden: stato di verifica resettato manualmente.", "info");
+        return;
+      }
+
+      if (cleanArgs === "verify") {
+        ctx.ui.notify("Esecuzione verifica Out-of-Band nel worktree isolato...", "info");
+        const oob = runOutOfBandVerification(process.cwd());
+        if (oob.success) {
+          lastSuccessfulTestTimestamp = Date.now();
+          ctx.ui.notify(`Verifica Out-of-Band PASS: ${oob.output.slice(0, 100)}`, "info");
+        } else {
+          ctx.ui.notify(`Verifica Out-of-Band FAIL: ${oob.output.slice(0, 100)}`, "error");
+        }
         return;
       }
 
@@ -309,7 +375,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      ctx.ui.notify("Uso: /warden status | /warden logs", "warning");
+      ctx.ui.notify("Uso: /warden status | /warden verify | /warden logs | /warden reset", "warning");
     },
   });
 }

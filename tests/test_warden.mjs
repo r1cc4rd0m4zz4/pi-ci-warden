@@ -91,27 +91,23 @@ const lastTestTurn1 = 0;
 const debtPersistsInTurn2 = lastMutationTurn1 > lastTestTurn1;
 assert.strictEqual(debtPersistsInTurn2, true, "Verification debt must persist across turns until test passes");
 
-// 7. Anti-Cheating: Lazy commit rejection (Level 2)
-function isLazyCommit(cmd) {
-  const commitMatch = cmd.match(/(?:git\s+commit\s+(?:-[a-zA-Z0-9-]+\s+)*(?:-m|-am)\s+)(['"])(.*?)\1/);
-  if (commitMatch) {
-    const msg = commitMatch[2].trim();
-    return /^(?:update|fix|wip|temp|test|done|patch|clean|changes|sync|wip!|temp!)$/i.test(msg) || msg.length < 10;
+// 7. Intent-Gated Git Commits (Anti-Cheating Architecture)
+function isCommitPermitted(cmd, userIntent) {
+  if (/\bgit\s+commit\b/i.test(cmd)) {
+    return Boolean(userIntent);
   }
-  return false;
+  return true;
 }
-assert.strictEqual(isLazyCommit("git commit -m 'update'"), true, "'update' must be rejected as lazy");
-assert.strictEqual(isLazyCommit("git commit -m 'fix'"), true, "'fix' must be rejected as lazy");
-assert.strictEqual(isLazyCommit("git commit -am 'wip'"), true, "'wip' must be rejected as lazy");
-assert.strictEqual(isLazyCommit("git commit -m 'docs: sanitize readme'"), false, "descriptive commit must pass");
+assert.strictEqual(isCommitPermitted("git commit -m 'feat: update auth'", false), false, "autonomous commit without user intent must be blocked");
+assert.strictEqual(isCommitPermitted("git commit -m 'fix: typo'", true), true, "commit with user intent must be allowed");
+assert.strictEqual(isCommitPermitted("git status", false), true, "read-only git operations allowed without intent");
 
-// 8. Zero-Tampering: Audit log protection (Level 3 - Controllore != Controllato)
-function isAuditLogTampering(cmd) {
-  return /(?:rm|unlink|truncate|>)\s+.*(?:\.cache[\/\\]laya[\/\\](?:firewall|warden)\.jsonl|laya_serve\.log)/i.test(cmd);
+// 8. Staged Diff Secret DLP Invariant
+function isStagedDiffClean(diffText) {
+  const secretPattern = /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{36}|xox[baprs]-[0-9a-zA-Z]{10,48})/i;
+  return !secretPattern.test(diffText);
 }
-assert.strictEqual(isAuditLogTampering("rm ~/.cache/laya/warden.jsonl"), true, "rm on warden log must be blocked");
-assert.strictEqual(isAuditLogTampering("rm -f ~/.cache/laya/firewall.jsonl"), true, "rm on firewall log must be blocked");
-assert.strictEqual(isAuditLogTampering("cat /dev/null > ~/.cache/laya/firewall.jsonl"), true, "truncation must be blocked");
-assert.strictEqual(isAuditLogTampering("tail -n 20 ~/.cache/laya/firewall.jsonl"), false, "passive read of log must be allowed");
+assert.strictEqual(isStagedDiffClean("diff --git a/key.pem\n+-----BEGIN RSA PRIVATE KEY-----\nMIIE..."), false, "private key in diff rejected");
+assert.strictEqual(isStagedDiffClean("diff --git a/src/index.ts\n+const port = 3000;"), true, "clean code diff accepted");
 
 console.log("All pi-ci-warden invariants passed (100% clean).");
