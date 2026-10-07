@@ -1,7 +1,7 @@
 /**
  * verification-ci-warden.ts
  *
- * Enforcement deterministico della regola 7 di AGENTS.md ("Verification & CI"):
+ * Enforcement deterministico di CI & Verification ("Test negative branches and edge cases first. Local pass != remote verification"):
  * "Test negative branches and edge cases first. Local pass != remote verification."
  *
  * Protezione Antagonista Anti-Cheating:
@@ -194,7 +194,7 @@ export default function (pi: ExtensionAPI) {
           lastMutation: lastMutatedPath,
         });
         ctx.ui.notify(
-          `[Verification Warden] FAKE-DONE INTERCETTATO (Regola 7 AGENTS.md): Codice modificato (${path.basename(lastMutatedPath)}) senza NESSUN test eseguito con successo!`,
+          `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Codice modificato (${path.basename(lastMutatedPath)}) senza NESSUN test eseguito con successo!`,
           "error"
         );
       } else if (lastCodeMutationTimestamp > lastSuccessfulTestTimestamp) {
@@ -203,7 +203,7 @@ export default function (pi: ExtensionAPI) {
           lastMutation: lastMutatedPath,
         });
         ctx.ui.notify(
-          `[Verification Warden] FAKE-DONE INTERCETTATO (Regola 7 AGENTS.md): Codice modificato DOPO l'ultimo test riuscito. Esegui i test per verificare le ultime modifiche!`,
+          `[Verification Warden] FAKE-DONE INTERCETTATO (CI & Verification): Codice modificato DOPO l'ultimo test riuscito. Esegui i test per verificare le ultime modifiche!`,
           "error"
         );
       } else if (testFilesModifiedInSession) {
